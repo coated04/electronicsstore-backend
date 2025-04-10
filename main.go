@@ -1,27 +1,48 @@
 package main
 
 import (
-    "log"
-    "net/http"
-    "github.com/gorilla/mux"
-    "bookstore/handlers"
+    "device-store/handlers" 
+    "device-store/models"    
+	"log"
+	"net/http"
+
+	"github.com/gorilla/mux"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 func main() {
-    router := mux.NewRouter()
-    router.HandleFunc("/books", handlers.GetBooks).Methods("GET")
-    router.HandleFunc("/books/{id}", handlers.GetBook).Methods("GET")
-    router.HandleFunc("/books", handlers.CreateBook).Methods("POST")
-    router.HandleFunc("/books/{id}", handlers.UpdateBook).Methods("PUT")
-    router.HandleFunc("/books/{id}", handlers.DeleteBook).Methods("DELETE")
+	dsn := "host=localhost user=postgres password=2001 dbname=devicestore port=5432 sslmode=disable"
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	if err != nil {
+		log.Fatal("Failed to connect to DB:", err)
+	}
 
-    router.HandleFunc("/authors", handlers.GetAuthors).Methods("GET")
-    router.HandleFunc("/authors", handlers.CreateAuthor).Methods("POST")
+	db.AutoMigrate(&models.Device{}, &models.Brand{}, &models.Category{})
 
-   
-    router.HandleFunc("/categories", handlers.GetCategories).Methods("GET")
-    router.HandleFunc("/categories", handlers.CreateCategory).Methods("POST")
+	h := &handlers.Handler{DB: db}
 
-    log.Println("Server running on :8000")
-    log.Fatal(http.ListenAndServe(":8000", router))
+	r := mux.NewRouter()
+
+	r.HandleFunc("/devices", h.GetDevices).Methods("GET")
+	r.HandleFunc("/devices/{id}", h.GetDeviceByID).Methods("GET")
+	r.HandleFunc("/devices", h.CreateDevice).Methods("POST")
+	r.HandleFunc("/devices/{id}", h.UpdateDevice).Methods("PUT")
+	r.HandleFunc("/devices/{id}", h.DeleteDevice).Methods("DELETE")
+
+
+	r.HandleFunc("/brands", h.GetBrands).Methods("GET")
+	r.HandleFunc("/brands/{id}", h.GetBrandByID).Methods("GET")
+	r.HandleFunc("/brands", h.CreateBrand).Methods("POST")
+	r.HandleFunc("/brands/{id}", h.UpdateBrand).Methods("PUT")
+	r.HandleFunc("/brands/{id}", h.DeleteBrand).Methods("DELETE")
+
+	r.HandleFunc("/categories", h.GetCategories).Methods("GET")
+	r.HandleFunc("/categories/{id}", h.GetCategoryByID).Methods("GET")
+	r.HandleFunc("/categories", h.CreateCategory).Methods("POST")
+	r.HandleFunc("/categories/{id}", h.UpdateCategory).Methods("PUT")
+	r.HandleFunc("/categories/{id}", h.DeleteCategory).Methods("DELETE")
+
+	log.Println("Server is running on http://localhost:8000")
+	http.ListenAndServe(":8000", r)
 }
