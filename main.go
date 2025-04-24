@@ -2,7 +2,6 @@ package main
 
 import (
     "device-store/handlers" 
-    "device-store/models"    
 	"log"
 	"net/http"
 
@@ -17,8 +16,6 @@ func main() {
 	if err != nil {
 		log.Fatal("Failed to connect to DB:", err)
 	}
-
-	db.AutoMigrate(&models.Device{}, &models.Brand{}, &models.Category{})
 
 	h := &handlers.Handler{DB: db}
 
@@ -42,6 +39,12 @@ func main() {
 	r.HandleFunc("/categories", h.CreateCategory).Methods("POST")
 	r.HandleFunc("/categories/{id}", h.UpdateCategory).Methods("PUT")
 	r.HandleFunc("/categories/{id}", h.DeleteCategory).Methods("DELETE")
+
+	r.HandleFunc("/register", h.Register).Methods("POST")
+    r.HandleFunc("/login", h.Login).Methods("POST")
+    r.HandleFunc("/user/{username}", h.UpdateUser).Methods("PUT")
+    r.HandleFunc("/user/{username}", h.DeleteUser).Methods("DELETE")
+
 
 	log.Println("Server is running on http://localhost:8000")
 	http.ListenAndServe(":8000", r)
