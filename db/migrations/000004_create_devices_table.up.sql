@@ -1,7 +1,8 @@
 CREATE TABLE devices (
     id SERIAL PRIMARY KEY,
-    name VARCHAR(100) NOT NULL,
-    brand_id INTEGER REFERENCES brands(id),
-    category_id INTEGER REFERENCES categories(id),
-    price NUMERIC(10, 2) NOT NULL
+    name VARCHAR(255) NOT NULL,
+    type VARCHAR(255),
+    brand_id INTEGER NOT NULL REFERENCES brands(id) ON DELETE RESTRICT,
+    price NUMERIC(10, 2),
+    category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE RESTRICT
 );

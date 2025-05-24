@@ -1,69 +1,83 @@
-
 package handlers
 
 import (
 	"encoding/json"
 	"device-store/user-service/models"
+	"device-store/user-service/utils"
 	"net/http"
-	"github.com/gorilla/mux"
+
 	"gorm.io/gorm"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type Handler struct {
 	DB *gorm.DB
 }
 
-func (h *Handler) GetUsers(w http.ResponseWriter, r *http.Request) {
-	var users []models.User
-	if err := h.DB.Find(&users).Error; err != nil {
-		http.Error(w, "Error fetching users", http.StatusInternalServerError)
-		return
-	}
-	json.NewEncoder(w).Encode(users)
-}
-
-func (h *Handler) GetUserByID(w http.ResponseWriter, r *http.Request) {
-	id := mux.Vars(r)["id"]
-	var user models.User
-	if err := h.DB.First(&user, id).Error; err != nil {
-		http.Error(w, "User not found", http.StatusNotFound)
-		return
-	}
-	json.NewEncoder(w).Encode(user)
-}
-
-func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	var user models.User
 	if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
 		http.Error(w, "Invalid input", http.StatusBadRequest)
 		return
 	}
-	h.DB.Create(&user)
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(user.Password), bcrypt.DefaultCost)
+	if err != nil {
+		http.Error(w, "Error encrypting password", http.StatusInternalServerError)
+		return
+	}
+	user.Password = string(hashedPassword)
+
+	if err := h.DB.Create(&user).Error; err != nil {
+		http.Error(w, "Error saving user", http.StatusInternalServerError)
+		return
+	}
+
+	user.Password = "" 
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(user)
 }
+func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
+    var req struct {
+        Email    string `json:"email"`
+        Password string `json:"password"`
+    }
+    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+        http.Error(w, "Invalid input", http.StatusBadRequest)
+        return
+    }
 
-func (h *Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
-	id := mux.Vars(r)["id"]
-	var user models.User
-	if err := h.DB.First(&user, id).Error; err != nil {
-		http.Error(w, "User not found", http.StatusNotFound)
-		return
-	}
-	var updatedUser models.User
-	if err := json.NewDecoder(r.Body).Decode(&updatedUser); err != nil {
-		http.Error(w, "Invalid input", http.StatusBadRequest)
-		return
-	}
-	h.DB.Save(&updatedUser)
-	json.NewEncoder(w).Encode(updatedUser)
-}
+    var user models.User
+    if err := h.DB.Where("email = ?", req.Email).First(&user).Error; err != nil {
+        http.Error(w, "Invalid email or password", http.StatusUnauthorized)
+        return
+    }
 
-func (h *Handler) DeleteUser(w http.ResponseWriter, r *http.Request) {
-	id := mux.Vars(r)["id"]
-	if err := h.DB.Delete(&models.User{}, id).Error; err != nil {
-		http.Error(w, "Failed to delete user", http.StatusInternalServerError)
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
+    if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
+        http.Error(w, "Invalid email or password", http.StatusUnauthorized)
+        return
+    }
+
+    token, err := utils.GenerateJWT(user.ID)
+    if err != nil {
+        http.Error(w, "Error generating token", http.StatusInternalServerError)
+        return
+    }
+
+    // Prepare response without password
+    responseUser := struct {
+        ID       uint   `json:"id"`
+        Username string `json:"username"`
+        Email    string `json:"email"`
+    }{
+        ID:       user.ID,
+        Username: user.Username,
+        Email:    user.Email,
+    }
+
+    // Send token + user info in JSON
+    json.NewEncoder(w).Encode(map[string]interface{}{
+        "token": token,
+        "user":  responseUser,
+    })
 }

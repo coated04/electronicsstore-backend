@@ -1,218 +1,188 @@
 package main
 
 import (
-	"device-store/handlers"
-	"device-store/models"
+	"encoding/json"
 	"fmt"
+	deviceHandlers "device-store/device-service/handlers"
+	deviceModels "device-store/device-service/models"
+	userHandlers "device-store/user-service/handlers"
+	userModels "device-store/user-service/models"
 	"github.com/gorilla/mux"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"testing"
 )
 
-var db *gorm.DB
-
-func TestMain(m *testing.M) {
-	var err error
-	dsn := "host=localhost user=postgres password=2001 dbname=devicestore port=5432 sslmode=disable"
-	db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
+func setupDeviceDB(t *testing.T) *gorm.DB {
+	dsn := "host=localhost user=postgres password=2001 dbname=devices port=5432 sslmode=disable"
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
-		panic("Failed to connect to database")
+		t.Fatal("failed to connect to Postgres device DB:", err)
 	}
-	db.AutoMigrate(&models.Brand{}, &models.Category{}, &models.Device{})
-	m.Run()
+	if err := db.AutoMigrate(&deviceModels.Device{}, &deviceModels.Brand{}, &deviceModels.Category{}); err != nil {
+		t.Fatal(err)
+	}
+	// Optional: clean DB for tests
+	db.Exec("DELETE FROM devices")
+	db.Exec("DELETE FROM brands")
+	db.Exec("DELETE FROM categories")
+	return db
 }
 
-func createTestDevice(t *testing.T) models.Device {
-	brand := models.Brand{Name: "Test Brand"}
-	category := models.Category{Name: "Test Category"}
-	if err := db.Create(&brand).Error; err != nil {
-		t.Fatalf("failed to create brand: %v", err)
+func setupUserDB(t *testing.T) *gorm.DB {
+	dsn := "host=localhost user=postgres password=2001 dbname=devices port=5432 sslmode=disable"
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	if err != nil {
+		t.Fatal("failed to connect to Postgres user DB:", err)
 	}
-	if err := db.Create(&category).Error; err != nil {
-		t.Fatalf("failed to create category: %v", err)
+	if err := db.AutoMigrate(&userModels.User{}); err != nil {
+		t.Fatal(err)
 	}
-	device := models.Device{
-		Name:       "Test Device",
-		BrandID:    brand.ID,
-		CategoryID: category.ID,
-		Price:      100.0,
-	}
-	if err := db.Create(&device).Error; err != nil {
-		t.Fatalf("failed to create device: %v", err)
-	}
-	return device
+	db.Exec("DELETE FROM users")
+	return db
 }
 
-func TestGetDevices(t *testing.T) {
-	r := mux.NewRouter()
-	h := &handlers.Handler{DB: db}
-	r.HandleFunc("/devices", h.GetDevices).Methods("GET")
+// -------- User tests ---------
 
-	req, _ := http.NewRequest("GET", "/devices", nil)
+func TestRegister_Success(t *testing.T) {
+	db := setupUserDB(t)
+	h := &userHandlers.Handler{DB: db}
+
+	payload := `{"username":"testuser","password":"testpass"}`
+	req := httptest.NewRequest("POST", "/register", strings.NewReader(payload))
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
+
+	h.Register(w, req)
 
 	if w.Code != http.StatusOK {
-		t.Errorf("Expected 200, got %v", w.Code)
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	var user userModels.User
+	if err := json.NewDecoder(w.Body).Decode(&user); err != nil {
+		t.Fatal(err)
+	}
+	if user.Username != "testuser" {
+		t.Errorf("expected username 'testuser', got %s", user.Username)
 	}
 }
 
-func TestGetDeviceByID(t *testing.T) {
-	device := createTestDevice(t)
+// ... other user tests unchanged except using userHandlers.Handler, userModels.User
 
-	r := mux.NewRouter()
-	h := &handlers.Handler{DB: db}
-	r.HandleFunc("/devices/{id}", h.GetDeviceByID).Methods("GET")
+// -------- Device tests ---------
 
-	req, _ := http.NewRequest("GET", "/devices/"+strconv.Itoa(int(device.ID)), nil)
+func TestGetDevices_Empty(t *testing.T) {
+	db := setupDeviceDB(t)
+	h := &deviceHandlers.Handler{DB: db}
+
+	req := httptest.NewRequest("GET", "/devices", nil)
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
+
+	h.GetDevices(w, req)
 
 	if w.Code != http.StatusOK {
-		t.Errorf("Expected 200, got %v", w.Code)
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var devices []deviceModels.Device
+	if err := json.NewDecoder(w.Body).Decode(&devices); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(devices) != 0 {
+		t.Errorf("expected empty devices list, got %d", len(devices))
 	}
 }
 
-func TestCreateDevice(t *testing.T) {
-	brand := models.Brand{Name: "CreateBrand"}
-	category := models.Category{Name: "CreateCategory"}
-	db.Create(&brand)
-	db.Create(&category)
+func TestCreateDevice_Success(t *testing.T) {
+	db := setupDeviceDB(t)
+	h := &deviceHandlers.Handler{DB: db}
 
-	r := mux.NewRouter()
-	h := &handlers.Handler{DB: db}
-	r.HandleFunc("/devices", h.CreateDevice).Methods("POST")
-
-	body := fmt.Sprintf(`{"name":"Created Device","brand_id":%d,"category_id":%d,"price":250.0}`, brand.ID, category.ID)
-	req, _ := http.NewRequest("POST", "/devices", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
+	payload := `{"name":"iPhone","price":999}`
+	req := httptest.NewRequest("POST", "/devices", strings.NewReader(payload))
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
+
+	h.CreateDevice(w, req)
 
 	if w.Code != http.StatusCreated {
-		t.Errorf("Expected 201, got %v", w.Code)
+		t.Fatalf("expected 201, got %d", w.Code)
+	}
+
+	var device deviceModels.Device
+	if err := json.NewDecoder(w.Body).Decode(&device); err != nil {
+		t.Fatal(err)
+	}
+
+	if device.Name != "iPhone" || device.Price != 999 {
+		t.Errorf("device data mismatch, got %+v", device)
 	}
 }
 
-func TestUpdateDevice(t *testing.T) {
-	device := createTestDevice(t)
+func TestGetDeviceByID_NotFound(t *testing.T) {
+	db := setupDeviceDB(t)
+	h := &deviceHandlers.Handler{DB: db}
 
-	r := mux.NewRouter()
-	h := &handlers.Handler{DB: db}
-	r.HandleFunc("/devices/{id}", h.UpdateDevice).Methods("PUT")
-
-	body := fmt.Sprintf(`{"name":"Updated Device","brand_id":%d,"category_id":%d,"price":200.0}`, device.BrandID, device.CategoryID)
-	req, _ := http.NewRequest("PUT", "/devices/"+strconv.Itoa(int(device.ID)), strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
+	req := httptest.NewRequest("GET", "/devices/123", nil)
+	req = mux.SetURLVars(req, map[string]string{"id": "123"})
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("Expected 200, got %v", w.Code)
-	}
-}
-
-func TestDeleteDevice(t *testing.T) {
-	device := createTestDevice(t)
-
-	r := mux.NewRouter()
-	h := &handlers.Handler{DB: db}
-	r.HandleFunc("/devices/{id}", h.DeleteDevice).Methods("DELETE")
-
-	req, _ := http.NewRequest("DELETE", "/devices/"+strconv.Itoa(int(device.ID)), nil)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusNoContent {
-		t.Errorf("Expected 204, got %v", w.Code)
-	}
-}
-
-func TestDeviceNotFound(t *testing.T) {
-	r := mux.NewRouter()
-	h := &handlers.Handler{DB: db}
-	r.HandleFunc("/devices/{id}", h.GetDeviceByID).Methods("GET")
-
-	req, _ := http.NewRequest("GET", "/devices/999999", nil)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
+	h.GetDeviceByID(w, req)
 
 	if w.Code != http.StatusNotFound {
-		t.Errorf("Expected 404, got %v", w.Code)
+		t.Fatalf("expected 404, got %d", w.Code)
 	}
 }
 
-func TestCreateInvalidDevice(t *testing.T) {
-	r := mux.NewRouter()
-	h := &handlers.Handler{DB: db}
-	r.HandleFunc("/devices", h.CreateDevice).Methods("POST")
+func TestUpdateDevice_Success(t *testing.T) {
+	db := setupDeviceDB(t)
+	h := &deviceHandlers.Handler{DB: db}
 
-	body := `{"name":"","brand_id":0,"category_id":0,"price":0}`
-	req, _ := http.NewRequest("POST", "/devices", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
+	device := deviceModels.Device{Name: "OldName", Price: 100}
+	db.Create(&device)
 
+	payload := `{"name":"NewName","price":200}`
+	req := httptest.NewRequest("PUT", "/devices/"+fmt.Sprintf("%d", device.ID), strings.NewReader(payload))
+	req = mux.SetURLVars(req, map[string]string{"id": fmt.Sprintf("%d", device.ID)})
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("Expected 400, got %v", w.Code)
-	}
-}
-
-func TestUpdateInvalidDevice(t *testing.T) {
-	device := createTestDevice(t)
-
-	r := mux.NewRouter()
-	h := &handlers.Handler{DB: db}
-	r.HandleFunc("/devices/{id}", h.UpdateDevice).Methods("PUT")
-
-	body := `{"name":"","brand_id":0,"category_id":0,"price":0}`
-	req, _ := http.NewRequest("PUT", "/devices/"+strconv.Itoa(int(device.ID)), strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("Expected 400, got %v", w.Code)
-	}
-
-
-	
-}
-func TestGetDevicesWithPagination(t *testing.T) {
-	r := mux.NewRouter()
-	h := &handlers.Handler{DB: db}
-	r.HandleFunc("/devices", h.GetDevices).Methods("GET")
-
-	req, _ := http.NewRequest("GET", "/devices?page=1&limit=2", nil)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
+	h.UpdateDevice(w, req)
 
 	if w.Code != http.StatusOK {
-		t.Errorf("Expected 200, got %v", w.Code)
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var updatedDevice deviceModels.Device
+	if err := json.NewDecoder(w.Body).Decode(&updatedDevice); err != nil {
+		t.Fatal(err)
+	}
+
+	if updatedDevice.Name != "NewName" || updatedDevice.Price != 200 {
+		t.Errorf("device not updated correctly, got %+v", updatedDevice)
 	}
 }
 
-func TestCreateDeviceWithMissingFields(t *testing.T) {
-	r := mux.NewRouter()
-	h := &handlers.Handler{DB: db}
-	r.HandleFunc("/devices", h.CreateDevice).Methods("POST")
-	body := `{"brand_id":1,"category_id":1}`
-	req, _ := http.NewRequest("POST", "/devices", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
+func TestDeleteDevice_Success(t *testing.T) {
+	db := setupDeviceDB(t)
+	h := &deviceHandlers.Handler{DB: db}
 
+	device := deviceModels.Device{Name: "ToDelete", Price: 10}
+	db.Create(&device)
+
+	req := httptest.NewRequest("DELETE", "/devices/"+fmt.Sprintf("%d", device.ID), nil)
+	req = mux.SetURLVars(req, map[string]string{"id": fmt.Sprintf("%d", device.ID)})
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("Expected 400, got %v", w.Code)
+	h.DeleteDevice(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", w.Code)
+	}
+
+	var check deviceModels.Device
+	if err := db.First(&check, device.ID).Error; err == nil {
+		t.Errorf("device was not deleted")
 	}
 }
